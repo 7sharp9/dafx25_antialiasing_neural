@@ -591,8 +591,18 @@ def main():
     
     # Setup logging
     if args.wandb:
+        # Determine save directory (Drive on Colab, local otherwise)
+        import os
+        if os.path.exists('/content/drive/MyDrive'):
+            # Running on Colab with Drive mounted
+            save_dir = '/content/drive/MyDrive/AA_Neural/checkpoints'
+        else:
+            # Running locally
+            save_dir = None  # Use current directory
+
         logger = pl.loggers.WandbLogger(
             project='aa_rnn',
+            save_dir=save_dir,
             config=conf,
             log_model=True,
         )
