@@ -44,7 +44,21 @@ def get_config(idx: int):
         'pre_emph': 'lp',
         'lr': 5e-4,
         'max_epochs': 100,
-        'tbptt_steps': 4410
+        'tbptt_steps': 4410,
+
+        'training': {
+            'use_ema': True,
+            'ema_decay': 0.999,
+            'gradient_clip_norm': 1.0,
+            'use_amp': False,  # Keep double precision per paper
+        },
+
+        'scheduler': {
+            'type': 'cosine_warm_restarts',
+            'T_0': 10,
+            'T_mult': 2,
+            'eta_min_ratio': 0.01,
+        }
     }
 
     # Proteus models --------------------
