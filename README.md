@@ -66,6 +66,26 @@ config_idx      Target Pedal/Amp        Model          Initial weights dir
 7               JHM8 Fuzz               TCN            weights/pre-trained-by-us/jhm8_tcn_teacher.nam
 ```
 
+#### Google Colab Training (GPU Accelerated)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/a-carson/dafx25_antialiasing_neural/blob/main/colab-run.ipynb)
+
+For faster training with GPU acceleration, use the provided Colab notebook.
+
+**Setup:**
+1. Create `AA_Neural/` folder in your Google Drive root
+2. Upload `weights/NAM/Marshall JCM 800 2203/` directory to `Drive/AA_Neural/weights/NAM/`
+3. Upload `audio_data/val_input.wav` to `Drive/AA_Neural/audio_data/`
+4. Click the badge above to open the notebook in Colab
+5. Update `REPO_URL` in the notebook (cell 2) with your fork or this repo URL
+6. Run all cells (Runtime → Run all)
+
+**Performance comparison:**
+- Local CPU: ~32 min/epoch
+- Colab T4 GPU: ~1-2 min/epoch (20-30x faster)
+
+See `colab-run.ipynb` for detailed instructions and troubleshooting.
+
 #### Citation
 If using this work please use the following citation:
 ```angular2html
