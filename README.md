@@ -68,7 +68,7 @@ config_idx      Target Pedal/Amp        Model          Initial weights dir
 
 #### Google Colab Training (GPU Accelerated)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/a-carson/dafx25_antialiasing_neural/blob/main/colab-run.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/7sharp9/dafx25_antialiasing_neural/blob/main/colab-run.ipynb)
 
 For faster training with GPU acceleration, use the provided Colab notebook.
 
