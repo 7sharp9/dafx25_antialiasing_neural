@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument("--config", type=int, default=0)
     parser.add_argument("--max_epochs", type=int, default=None)  # Override config
     parser.add_argument("--fast_dev_run", action="store_true")  # Quick debug run
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None)  # Resume from checkpoint
     return parser.parse_args()
 
 
@@ -639,6 +640,7 @@ def main():
         model=model,
         train_dataloaders=train_loader,
         val_dataloaders=[val_loader, audio_loader],
+        ckpt_path=args.resume_from_checkpoint,
     )
     
     # Final validation on best model instead of test
