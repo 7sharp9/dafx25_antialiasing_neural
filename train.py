@@ -18,10 +18,18 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'OpenAmp'))
 from Open_Amp.amp_model import AmpModel
 
-from dataloader import SineToneDataset, SequenceDataset
+from dataloader import SineToneDataset, SequenceDataset, CachedSineToneDataset
 from spectral import cheb_fft, bandlimit_batch, PerceptualFIRFilter
 from nmr import NMR
 from config import get_config
+
+# CPU Performance Optimization
+if not torch.cuda.is_available():
+    num_cores = os.cpu_count() or 8
+    # Use physical cores only (typically num_cores // 2 for hyperthreading)
+    torch.set_num_threads(max(1, num_cores // 2))
+    torch.set_num_interop_threads(2)
+    print(f"CPU optimization: using {max(1, num_cores // 2)} threads for torch operations")
 
 import wandb
 
@@ -33,6 +41,9 @@ def parse_args():
     parser.add_argument("--max_epochs", type=int, default=None)  # Override config
     parser.add_argument("--fast_dev_run", action="store_true")  # Quick debug run
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)  # Resume from checkpoint
+    parser.add_argument("--use_cached_data", action="store_true", help="Use pre-cached teacher outputs")
+    parser.add_argument("--cached_train_path", type=str, default="cached_train.pt", help="Path to cached training data")
+    parser.add_argument("--cached_val_path", type=str, default="cached_val.pt", help="Path to cached validation data")
     return parser.parse_args()
 
 
@@ -139,13 +150,13 @@ class AARNN(LightningModule):
         
         # ESR loss (time-domain)
         if weights['esr_normal'] > 0:
-            esr = torch.sum((pred_filt - targ_filt) ** 2) / torch.sum(targ_filt ** 2)
+            esr = torch.sum((pred_filt - targ_filt) ** 2) / (torch.sum(targ_filt ** 2) + 1e-10)
             loss = loss + weights['esr_normal'] * esr
             metrics['esr'] = esr.detach()
         
         # DC loss
         if weights['dc'] > 0:
-            dc = torch.mean(targ_filt - pred_filt) ** 2 / torch.mean(targ_filt ** 2)
+            dc = torch.mean(targ_filt - pred_filt) ** 2 / (torch.mean(targ_filt ** 2) + 1e-10)
             loss = loss + weights['dc'] * dc
             metrics['dc'] = dc.detach()
         
@@ -161,7 +172,7 @@ class AARNN(LightningModule):
                 metrics['mesr'] = mesr.detach()
             
             if weights.get('asr', 0) > 0:
-                asr = torch.sum(aliases ** 2) / torch.sum(y_pred_bl ** 2)
+                asr = torch.sum(aliases ** 2) / (torch.sum(y_pred_bl ** 2) + 1e-10)
                 loss = loss + weights['asr'] * asr
                 metrics['asr'] = asr.detach()
         
@@ -178,7 +189,8 @@ class AARNN(LightningModule):
         batch_load_time = time.time() - self._batch_load_start
         
         # Prepare target: bandlimit teacher output to remove aliasing
-        y_bl, _ = bandlimit_batch(y.squeeze(-1), f0, self.conf['sample_rate'])
+        with torch.no_grad():
+            y_bl, _ = bandlimit_batch(y.squeeze(-1), f0, self.conf['sample_rate'])
         warmup_samples = x.shape[1] - y_bl.shape[-1]
         
         # Handle model-specific warmup
@@ -196,8 +208,8 @@ class AARNN(LightningModule):
         frame_metrics = []
         
         for frame_idx in range(num_frames):
-            opt.zero_grad()
-            
+            opt.zero_grad(set_to_none=True)
+
             start = tbptt_steps * frame_idx
             end = tbptt_steps * (frame_idx + 1)
             
@@ -353,7 +365,7 @@ class AARNN(LightningModule):
         
         # Log audio samples periodically
         if self._audio_log_counter % 4 == 0 and batch_idx < 5:
-            if self.logger is not None:
+            if self.logger is not None and isinstance(self.logger, pl.loggers.WandbLogger):
                 self.logger.experiment.log({
                     f'audio/clip_{batch_idx}': wandb.Audio(
                         y_pred[-1, :, 0].cpu().numpy(),
@@ -469,7 +481,7 @@ class AARNN(LightningModule):
 
 def create_dataloaders(conf, args):
     """Create train, validation, and audio dataloaders."""
-    
+
     if torch.cuda.is_available():
         num_workers = min(10, os.cpu_count() or 1)
         persistent_workers = True
@@ -478,35 +490,65 @@ def create_dataloaders(conf, args):
         num_workers = 0
         persistent_workers = False
         pin_memory = False
-    
-    # Training dataloader
-    train_dataset = SineToneDataset(
-        device=conf['model_json'],
-        sample_rate=conf['sample_rate'],
-        **conf['train_data']
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=conf['batch_size']['train'],
-        num_workers=num_workers,
-        persistent_workers=persistent_workers,
-        pin_memory=pin_memory,
-        shuffle=True,
-    )
-    
-    # Validation dataloader (sine tones)
-    val_dataset = SineToneDataset(
-        device=conf['model_json'],
-        sample_rate=conf['sample_rate'],
-        **conf['val_data']
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=conf['batch_size']['val'],
-        num_workers=num_workers,
-        persistent_workers=persistent_workers,
-        shuffle=False,
-    )
+
+    # Use cached data if requested (eliminates data loading bottleneck)
+    if args.use_cached_data:
+        print(f"Using cached datasets:")
+        print(f"  Training: {args.cached_train_path}")
+        print(f"  Validation: {args.cached_val_path}")
+
+        # Training dataloader
+        train_dataset = CachedSineToneDataset(args.cached_train_path)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=conf['batch_size']['train'],
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=pin_memory,
+            shuffle=True,
+        )
+
+        # Validation dataloader (sine tones)
+        val_dataset = CachedSineToneDataset(args.cached_val_path)
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=conf['batch_size']['val'],
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            shuffle=False,
+        )
+    else:
+        # Original on-the-fly generation (runs teacher on CPU in workers)
+        print("Using on-the-fly dataset generation (teacher inference in workers)")
+
+        # Training dataloader
+        train_dataset = SineToneDataset(
+            device=conf['model_json'],
+            sample_rate=conf['sample_rate'],
+            **conf['train_data']
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=conf['batch_size']['train'],
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=pin_memory,
+            shuffle=True,
+        )
+
+        # Validation dataloader (sine tones)
+        val_dataset = SineToneDataset(
+            device=conf['model_json'],
+            sample_rate=conf['sample_rate'],
+            **conf['val_data']
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=conf['batch_size']['val'],
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            shuffle=False,
+        )
     
     # Audio validation dataloader
     in_audio, audio_sr = torchaudio.load('audio_data/val_input.wav')
@@ -593,13 +635,12 @@ def main():
     # Setup logging
     if args.wandb:
         # Determine save directory (Drive on Colab, local otherwise)
-        import os
         if os.path.exists('/content/drive/MyDrive'):
             # Running on Colab with Drive mounted
             save_dir = '/content/drive/MyDrive/AA_Neural/checkpoints'
         else:
             # Running locally
-            save_dir = None  # Use current directory
+            save_dir = './wandb_logs'  # Use local wandb directory
 
         logger = pl.loggers.WandbLogger(
             project='aa_rnn',
@@ -630,10 +671,13 @@ def main():
         deterministic=True,
     )
     
-    # Initial validation
-    print("Running initial validation...")
-    trainer.validate(model=model, dataloaders=[val_loader, audio_loader])
-    
+    # Initial validation (skip when resuming from checkpoint)
+    if not args.resume_from_checkpoint:
+        print("Running initial validation...")
+        trainer.validate(model=model, dataloaders=[val_loader, audio_loader])
+    else:
+        print(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
+
     # Training
     print("Starting training...")
     trainer.fit(

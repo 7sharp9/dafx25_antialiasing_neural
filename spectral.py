@@ -218,7 +218,7 @@ class PerceptualFIRFilter(torch.nn.Module):
             h = firwin(N + 1, cutoff=fc, fs=fs, window=('kaiser', kaiser_beta(As)))
 
             self.ntaps = N+1
-            self.fir = torch.nn.Conv1d(1, 1, kernel_size=N+1, bias=False, padding=self.ntaps//2)
+            self.fir = torch.nn.Conv1d(1, 1, kernel_size=N+1, bias=False, padding='same')
             self.fir.weight.requires_grad = False
             self.fir.weight.data = torch.tensor(h).view(1, 1, -1)
 
@@ -250,7 +250,7 @@ class PerceptualFIRFilter(torch.nn.Module):
 
             # now implement this digital FIR filter as a Conv1d layer
             self.fir = torch.nn.Conv1d(
-                1, 1, kernel_size=ntaps, bias=False, padding=ntaps // 2
+                1, 1, kernel_size=ntaps, bias=False, padding='same'
             )
             self.fir.weight.requires_grad = False
             self.fir.weight.data = torch.tensor(taps.astype("float64")).view(1, 1, -1)

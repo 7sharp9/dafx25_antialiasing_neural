@@ -122,6 +122,36 @@ class SequenceDataset(Dataset):
         return wrapped_data
 
 
+class CachedSineToneDataset(Dataset):
+    """
+    Dataset that loads pre-cached teacher outputs from disk.
+
+    This eliminates the data loading bottleneck by loading pre-processed
+    (x, y, f0, dB) tuples instead of running teacher inference on-the-fly.
+
+    Args:
+        cache_path: Path to cached dataset file (.pt)
+    """
+
+    def __init__(self, cache_path):
+        print(f"Loading cached dataset from {cache_path}...")
+        self.data = torch.load(cache_path)
+        print(f"Loaded {len(self.data)} cached samples")
+
+        # Validate data format
+        if len(self.data) > 0:
+            sample = self.data[0]
+            assert len(sample) == 4, "Cached data must be (x, y, f0, dB) tuples"
+            print(f"  Sample shapes: x={sample[0].shape}, y={sample[1].shape}")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        x, y, f0, dB = self.data[index]
+        return x, y, f0, dB
+
+
 class SineToneLoadingDataset(SequenceDataset):
 
     def __init__(self,

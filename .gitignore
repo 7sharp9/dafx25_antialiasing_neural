@@ -6,3 +6,4 @@ lightning_logs/
 /wandb
 /json
 /weights/NAM
+/wandb_logs
